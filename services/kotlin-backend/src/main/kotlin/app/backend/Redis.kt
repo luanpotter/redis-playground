@@ -18,6 +18,11 @@ object Redis {
 
   private fun idMapKey(workflowToken: String) = "event_ids:$workflowToken"
 
+  private fun idToKey(workflowToken: String, id: String): String? {
+    val key = sync.hget(idMapKey(workflowToken), id) ?: return null
+    return "($key"
+  }
+
   fun add(
     workflowToken: String,
     event: SseEvent,
@@ -30,20 +35,14 @@ object Redis {
 
   fun list(
     workflowToken: String,
-    fromId: String,
+    fromId: String?,
     count: Long,
-  ): Pair<List<SseEvent>, String> {
-    val startId = if (fromId == "-") {
-      "-"
-    } else {
-      sync.hget(idMapKey(workflowToken), fromId) ?: return listOf<SseEvent>() to fromId
-    }
+  ): Pair<List<SseEvent>, String?> {
+    val fromKey = fromId
+      ?.let { idToKey(workflowToken, it) }
+      ?: "-"
 
-    val range = if (startId == "-") {
-      Range.create("-", "+")
-    } else {
-      Range.create("($startId", "+")
-    }
+    val range = Range.create(fromKey, "+")
 
     val entries = sync.xrange(redisKey(workflowToken), range, Limit.from(count))
     val events = entries.map { entry ->
@@ -55,11 +54,8 @@ object Redis {
       )
     }
 
-    val lastId = if (events.isEmpty()) {
-      fromId
-    } else {
-      events.last().id
-    }
+    val lastId = events.lastOrNull()?.id
+      ?: fromId
 
     return events to lastId
   }
