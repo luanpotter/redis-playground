@@ -14,10 +14,20 @@ export default function App(): JSX.Element {
   const seenEventIds = useRef<Map<string, Set<string>>>(new Map());
   const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
 
-  const handleCreateWorkflow = async (): Promise<void> => {
+  const handleCreateAndStreamWorkflow = async (): Promise<void> => {
     const token = await createWorkflow();
     await startWorkflow(token);
     setWorkflows((prev) => [...prev, { token, lines: [], lastEventId: '-', status: 'running' }]);
+    seenEventIds.current.set(token, new Set());
+  };
+
+  const handleCreateWorkflow = async (): Promise<void> => {
+    const token = await createWorkflow();
+    await startWorkflow(token);
+    setWorkflows((prev) => [
+      ...prev,
+      { token, lines: [], lastEventId: '-', status: 'disconnected' },
+    ]);
     seenEventIds.current.set(token, new Set());
   };
 
@@ -172,7 +182,10 @@ export default function App(): JSX.Element {
       `}</style>
       <header>
         <h1>Redis Playground</h1>
-        <button onClick={handleCreateWorkflow}>Create Workflow</button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={handleCreateAndStreamWorkflow}>Create &amp; Stream</button>
+          <button onClick={handleCreateWorkflow}>Create</button>
+        </div>
       </header>
       <main>
         {workflows.map((workflow) => (
