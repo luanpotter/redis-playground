@@ -35,7 +35,8 @@ fun Route.apiRoutes() {
 
   sse("/workflows/{workflowToken}/stream") {
     val workflowToken = call.parameters["workflowToken"]!!
-    var lastId: String? = null
+    val resumeFromId = call.request.queryParameters["lastEventId"]
+    var lastId: String? = resumeFromId
 
     while (true) {
       val (events, newLastId) = Redis.list(

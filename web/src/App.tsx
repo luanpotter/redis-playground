@@ -5,75 +5,125 @@ import { createWorkflow, startWorkflow } from './api';
 interface Workflow {
   token: string;
   lines: string[];
-  status: 'running' | 'ended';
+  lastEventId: string;
+  status: 'running' | 'ended' | 'disconnected';
 }
 
 export default function App(): JSX.Element {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const seenEventIds = useRef<Map<string, Set<string>>>(new Map());
+  const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
 
   const handleCreateWorkflow = async (): Promise<void> => {
     const token = await createWorkflow();
     await startWorkflow(token);
-    setWorkflows((prev) => [...prev, { token, lines: [], status: 'running' }]);
+    setWorkflows((prev) => [...prev, { token, lines: [], lastEventId: '-', status: 'running' }]);
     seenEventIds.current.set(token, new Set());
   };
 
-  useEffect(() => {
-    const eventSources = workflows.map((workflow) => {
-      if (workflow.status === 'ended') return null;
+  const connectWorkflow = (workflowToken: string, fromEventId: string) => {
+    // Close existing connection if any
+    const existing = eventSourcesRef.current.get(workflowToken);
+    if (existing) {
+      existing.close();
+    }
 
-      const eventSource = new EventSource(
-        `http://localhost:8080/workflows/${workflow.token}/stream`,
+    const baseUrl = `http://localhost:8080/workflows/${workflowToken}/stream`;
+    const queryParams =
+      fromEventId === '-' ? '' : `?lastEventId=${encodeURIComponent(fromEventId)}`;
+    const url = `${baseUrl}${queryParams}`;
+
+    const eventSource = new EventSource(url);
+
+    // Random disconnection: 20% chance every 2 seconds
+    const disconnectTimer = setInterval(() => {
+      if (Math.random() < 0.2) {
+        eventSource.close();
+        clearInterval(disconnectTimer);
+        setWorkflows((prev) =>
+          prev.map((w) =>
+            w.token === workflowToken ? { ...w, status: 'disconnected' as const } : w,
+          ),
+        );
+      }
+    }, 2000);
+
+    eventSource.addEventListener('output', (event) => {
+      const eventId = event.lastEventId;
+      const workflowSeenIds = seenEventIds.current.get(workflowToken);
+
+      if (workflowSeenIds?.has(eventId)) {
+        return;
+      }
+      workflowSeenIds?.add(eventId);
+
+      setWorkflows((prev) =>
+        prev.map((workflow) => {
+          if (workflow.token !== workflowToken) {
+            return workflow;
+          }
+          return {
+            ...workflow,
+            lines: [...workflow.lines, event.data],
+            lastEventId: eventId,
+          };
+        }),
       );
-
-      eventSource.addEventListener('output', (event) => {
-        const eventId = event.lastEventId;
-        const workflowSeenIds = seenEventIds.current.get(workflow.token);
-
-        // Deduplicate by event ID
-        if (workflowSeenIds?.has(eventId)) {
-          return;
-        }
-        workflowSeenIds?.add(eventId);
-
-        setWorkflows((prev) =>
-          prev.map((w) => {
-            if (w.token !== workflow.token) return w;
-            return {
-              ...w,
-              lines: [...w.lines, event.data],
-            };
-          }),
-        );
-      });
-
-      eventSource.addEventListener('end', () => {
-        setWorkflows((prev) =>
-          prev.map((w) => {
-            if (w.token !== workflow.token) return w;
-            return {
-              ...w,
-              status: 'ended',
-            };
-          }),
-        );
-        eventSource.close();
-      });
-
-      eventSource.onerror = () => {
-        console.error('EventSource error for workflow', workflow.token);
-        eventSource.close();
-      };
-
-      return eventSource;
     });
 
-    return () => {
-      eventSources.forEach((es) => {
-        if (es) es.close();
-      });
+    eventSource.addEventListener('end', () => {
+      clearInterval(disconnectTimer);
+      setWorkflows((prev) =>
+        prev.map((workflow) => {
+          if (workflow.token !== workflowToken) return workflow;
+          return {
+            ...workflow,
+            status: 'ended',
+          };
+        }),
+      );
+      eventSource.close();
+    });
+
+    eventSource.onerror = () => {
+      console.error('EventSource error for workflow', workflowToken);
+      clearInterval(disconnectTimer);
+      eventSource.close();
+      setWorkflows((prev) =>
+        prev.map((workflow) =>
+          workflow.token === workflowToken
+            ? { ...workflow, status: 'disconnected' as const }
+            : workflow,
+        ),
+      );
     };
+
+    eventSourcesRef.current.set(workflowToken, eventSource);
+
+    return () => {
+      clearInterval(disconnectTimer);
+      eventSource.close();
+    };
+  };
+
+  const handleReconnect = (workflowToken: string, lastEventId: string) => {
+    connectWorkflow(workflowToken, lastEventId);
+    setWorkflows((prev) =>
+      prev.map((workflow) =>
+        workflow.token === workflowToken ? { ...workflow, status: 'running' as const } : workflow,
+      ),
+    );
+  };
+
+  useEffect(() => {
+    workflows.forEach((workflow) => {
+      if (workflow.status === 'running') {
+        // Check if we already have a connection
+        if (!eventSourcesRef.current.has(workflow.token)) {
+          connectWorkflow(workflow.token, workflow.lastEventId);
+        }
+      }
+    });
   }, [workflows]);
 
   return (
@@ -96,6 +146,29 @@ export default function App(): JSX.Element {
           margin: 0;
           padding: 0;
         }
+        .workflow-status {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .status-badge {
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-size: 0.9em;
+          font-weight: bold;
+        }
+        .status-running {
+          background-color: #4caf50;
+          color: white;
+        }
+        .status-ended {
+          background-color: #2196f3;
+          color: white;
+        }
+        .status-disconnected {
+          background-color: #ff9800;
+          color: white;
+        }
       `}</style>
       <header>
         <h1>Redis Playground</h1>
@@ -104,8 +177,14 @@ export default function App(): JSX.Element {
       <main>
         {workflows.map((workflow) => (
           <article key={workflow.token}>
-            <header>
-              <strong>{workflow.token}</strong> - {workflow.status}
+            <header className="workflow-status">
+              <strong>{workflow.token}</strong>
+              <span className={`status-badge status-${workflow.status}`}>{workflow.status}</span>
+              {workflow.status === 'disconnected' && (
+                <button onClick={() => handleReconnect(workflow.token, workflow.lastEventId)}>
+                  Reconnect
+                </button>
+              )}
             </header>
             <div className="code-output">
               {workflow.lines.map((line, i) => (
