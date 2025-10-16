@@ -1,0 +1,18 @@
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Disable Lettuce (Redis client) debug logs -->
+    <logger name="io.lettuce" level="WARN"/>
+    <logger name="io.lettuce.core" level="WARN"/>
+    
+    <!-- Your app logs -->
+    <logger name="app.backend" level="DEBUG"/>
+    
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>
