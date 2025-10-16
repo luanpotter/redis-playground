@@ -2,4 +2,4 @@
 
 [![CI](https://github.com/luanpotter/redis-playground/actions/workflows/ci.yml/badge.svg)](https://github.com/luanpotter/redis-playground/actions/workflows/ci.yml)
 
-<img width="1236" height="1680" alt="image" src="https://github.com/user-attachments/assets/ae793c8d-3a78-4de8-b914-b60f2c04692e" />
+<img width="512" alt="image" src="https://github.com/user-attachments/assets/9a8512b9-ca9e-4b87-b241-6ef2c7d7ab8c" />
