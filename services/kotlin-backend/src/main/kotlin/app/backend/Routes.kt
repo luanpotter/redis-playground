@@ -4,8 +4,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
-import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.sse.sse
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 fun Route.apiRoutes() {
@@ -24,30 +25,44 @@ fun Route.apiRoutes() {
 
   post("/ingest/{workflowToken}") {
     val workflowToken = call.parameters["workflowToken"]!!
-    val part = call.receive<OutputPart>()
+    val event = call.receive<SseEvent>()
 
-    println("Ingesting $workflowToken - part: $part")
-    Redis.add(workflowToken, part)
+    println("Ingesting event for workflow $workflowToken: $event")
+    Redis.add(workflowToken, event)
 
     call.respond(HttpStatusCode.Accepted)
   }
 
-  get("/workflows/{workflowToken}/output") {
+  sse("/workflows/{workflowToken}/stream") {
     val workflowToken = call.parameters["workflowToken"]!!
-    val fromToken = call.request.queryParameters["fromToken"] ?: "-"
-    val count = call.request.queryParameters["count"]?.toLongOrNull() ?: 200
+    var lastId = "-"
 
-    val (parts, lastToken) = Redis.list(
-      workflowToken = workflowToken,
-      fromToken = fromToken,
-      count = count,
-    )
+    while (true) {
+      val (events, newLastId) = Redis.list(
+        workflowToken = workflowToken,
+        fromId = lastId,
+        count = 200,
+      )
 
-    val response = OutputPartsResponse(
-      parts = parts,
-      fromToken = fromToken,
-      lastToken = lastToken,
-    )
-    call.respond(response)
+      events.forEach { event ->
+        send(
+          data = event.data,
+          event = event.event,
+          id = event.id,
+        )
+      }
+
+      // Always update lastId when we get events
+      if (events.isNotEmpty()) {
+        lastId = newLastId
+      }
+
+      // Check if workflow ended
+      if (events.any { it.event == "end" }) {
+        break
+      }
+
+      delay(100)
+    }
   }
 }

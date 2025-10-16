@@ -3,8 +3,8 @@ package app.source
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class OutputPart(
-  val token: String,
-  val ts: Long,
+data class SseEvent(
+  val id: String,
+  val event: String,
   val data: String,
 )

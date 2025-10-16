@@ -8,21 +8,16 @@ data class CreateWorkflowResponse(
 )
 
 @Serializable
-data class OutputPart(
-  val token: String,
-  val ts: Long,
+data class SseEvent(
+  val id: String,
+  val event: String,
   val data: String,
 ) {
   fun toMap(): Map<String, String> = mapOf(
-    "token" to token,
-    "ts" to ts.toString(),
+    "id" to id,
+    "event" to event,
     "data" to data,
   )
-}
 
-@Serializable
-data class OutputPartsResponse(
-  val parts: List<OutputPart>,
-  val fromToken: String,
-  val lastToken: String,
-)
+  fun toSseFormat(): String = "id: $id\nevent: $event\ndata: $data\n\n"
+}

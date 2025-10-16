@@ -1,54 +1,77 @@
 import type { JSX } from 'react';
-import { useEffect, useState } from 'react';
-import type { OutputPart } from './api';
-import { createWorkflow, startWorkflow, fetchOutput } from './api';
+import { useEffect, useRef, useState } from 'react';
+import { createWorkflow, startWorkflow } from './api';
 
 interface Workflow {
   token: string;
-  parts: OutputPart[];
+  lines: string[];
   status: 'running' | 'ended';
 }
 
 export default function App(): JSX.Element {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const seenEventIds = useRef<Map<string, Set<string>>>(new Map());
 
   const handleCreateWorkflow = async (): Promise<void> => {
     const token = await createWorkflow();
     await startWorkflow(token);
-    setWorkflows((prev) => [...prev, { token, parts: [], status: 'running' }]);
+    setWorkflows((prev) => [...prev, { token, lines: [], status: 'running' }]);
+    seenEventIds.current.set(token, new Set());
   };
 
   useEffect(() => {
-    const intervals = workflows.map((workflow) => {
+    const eventSources = workflows.map((workflow) => {
       if (workflow.status === 'ended') return null;
 
-      return setInterval(() => {
-        const lastToken =
-          workflow.parts.length > 0
-            ? (workflow.parts[workflow.parts.length - 1]?.token ?? '-')
-            : '-';
-        void fetchOutput(workflow.token, lastToken).then((response) => {
-          if (response.parts.length > 0) {
-            setWorkflows((prev) =>
-              prev.map((w) => {
-                if (w.token !== workflow.token) return w;
-                const newParts = [...w.parts, ...response.parts];
-                const hasEnd = response.parts.some((p) => p.data === 'end');
-                return {
-                  ...w,
-                  parts: newParts,
-                  status: hasEnd ? 'ended' : 'running',
-                };
-              }),
-            );
-          }
-        });
-      }, 100);
+      const eventSource = new EventSource(
+        `http://localhost:8080/workflows/${workflow.token}/stream`,
+      );
+
+      eventSource.addEventListener('output', (event) => {
+        const eventId = event.lastEventId;
+        const workflowSeenIds = seenEventIds.current.get(workflow.token);
+
+        // Deduplicate by event ID
+        if (workflowSeenIds?.has(eventId)) {
+          return;
+        }
+        workflowSeenIds?.add(eventId);
+
+        setWorkflows((prev) =>
+          prev.map((w) => {
+            if (w.token !== workflow.token) return w;
+            return {
+              ...w,
+              lines: [...w.lines, event.data],
+            };
+          }),
+        );
+      });
+
+      eventSource.addEventListener('end', () => {
+        setWorkflows((prev) =>
+          prev.map((w) => {
+            if (w.token !== workflow.token) return w;
+            return {
+              ...w,
+              status: 'ended',
+            };
+          }),
+        );
+        eventSource.close();
+      });
+
+      eventSource.onerror = () => {
+        console.error('EventSource error for workflow', workflow.token);
+        eventSource.close();
+      };
+
+      return eventSource;
     });
 
     return () => {
-      intervals.forEach((interval) => {
-        if (interval) clearInterval(interval);
+      eventSources.forEach((es) => {
+        if (es) es.close();
       });
     };
   }, [workflows]);
@@ -85,8 +108,8 @@ export default function App(): JSX.Element {
               <strong>{workflow.token}</strong> - {workflow.status}
             </header>
             <div className="code-output">
-              {workflow.parts.map((part, i) => (
-                <div key={i}>{part.data}</div>
+              {workflow.lines.map((line, i) => (
+                <div key={i}>{line}</div>
               ))}
             </div>
           </article>

@@ -21,22 +21,25 @@ object StreamGenerator {
       return
     }
 
-    fun send(data: String) {
-      val part = OutputPart(
-        token = UUID.randomUUID().toString(),
-        ts = System.currentTimeMillis(),
+    fun send(
+      event: String,
+      data: String,
+    ) {
+      val sseEvent = SseEvent(
+        id = UUID.randomUUID().toString(),
+        event = event,
         data = data,
       )
-      println("Sending $workflowToken - part: $part")
-      BackendApi.post("ingest/$workflowToken", Json.encodeToString(part))
+      println("Sending event: $sseEvent")
+      BackendApi.post("ingest/$workflowToken", Json.encodeToString(sseEvent))
     }
 
     workflows[workflowToken] = scope.launch {
       var nextSeq = 1
       while (isActive) {
-        send("seq[${nextSeq++}]")
+        send("output", "seq[${nextSeq++}]")
         if (Random.nextDouble() < 0.05) {
-          send("end")
+          send("end", "workflow completed")
 
           stop(workflowToken)
           break // finish processing

@@ -16,27 +16,27 @@ object Redis {
 
   private fun redisKey(workflowToken: String) = "workflow_events:$workflowToken"
 
-  private fun idMapKey(workflowToken: String) = "output_part_tokens:$workflowToken"
+  private fun idMapKey(workflowToken: String) = "event_ids:$workflowToken"
 
   fun add(
     workflowToken: String,
-    part: OutputPart,
+    event: SseEvent,
   ) {
     val key = redisKey(workflowToken)
-    val redisId = sync.xadd(key, XAddArgs.Builder.maxlen(MAX_LENGTH).approximateTrimming(), part.toMap())
-    sync.hset(idMapKey(workflowToken), part.token, redisId)
+    val redisId = sync.xadd(key, XAddArgs.Builder.maxlen(MAX_LENGTH).approximateTrimming(), event.toMap())
+    sync.hset(idMapKey(workflowToken), event.id, redisId)
     sync.expire(key, TTL_SECONDS)
   }
 
   fun list(
     workflowToken: String,
-    fromToken: String,
+    fromId: String,
     count: Long,
-  ): Pair<List<OutputPart>, String> {
-    val startId = if (fromToken == "-") {
+  ): Pair<List<SseEvent>, String> {
+    val startId = if (fromId == "-") {
       "-"
     } else {
-      sync.hget(idMapKey(workflowToken), fromToken) ?: return listOf<OutputPart>() to fromToken
+      sync.hget(idMapKey(workflowToken), fromId) ?: return listOf<SseEvent>() to fromId
     }
 
     val range = if (startId == "-") {
@@ -46,21 +46,21 @@ object Redis {
     }
 
     val entries = sync.xrange(redisKey(workflowToken), range, Limit.from(count))
-    val parts = entries.map { entry ->
+    val events = entries.map { entry ->
       val message = entry.body
-      OutputPart(
-        token = message["token"].orEmpty(),
-        ts = message["ts"]?.toLongOrNull() ?: 0L,
+      SseEvent(
+        id = message["id"].orEmpty(),
+        event = message["event"].orEmpty(),
         data = message["data"].orEmpty(),
       )
     }
 
-    val lastToken = if (entries.isEmpty()) {
-      fromToken
+    val lastId = if (events.isEmpty()) {
+      fromId
     } else {
-      parts.last().token
+      events.last().id
     }
 
-    return parts to lastToken
+    return events to lastId
   }
 }
